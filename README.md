@@ -1,36 +1,119 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Snelpost Intake Webhook
 
-## Getting Started
+Smart intake system that automatically reads, understands, and routes incoming customer messages — enriched with weather context.
 
-First, run the development server:
+## Architecture
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+```
+POST /api/intake { "message": "..." }
+  → AI extraction (GPT-4o-mini via Vercel AI SDK + Zod)
+  → Geocoding (Nominatim/OpenStreetMap)
+  → Weather (Open-Meteo)
+  → Routing logic (category + weather → action)
+  → Outbound webhook (webhook.site)
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Setup
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 1. Install dependencies
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+bun install
+```
 
-## Learn More
+### 2. Configure environment
 
-To learn more about Next.js, take a look at the following resources:
+Create `.env.local`:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```env
+OPENAI_API_KEY=sk-your-key-here
+WEBHOOK_SITE_URL=https://webhook.site/your-unique-id
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### 3. Run
 
-## Deploy on Vercel
+```bash
+bun run dev
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### 4. Test
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Use [Postman](https://www.postman.com/) to send a test request:
+
+1. Open Postman and create a new request
+2. Set method to **POST**
+3. Set URL to `http://localhost:3000/api/intake`
+4. Go to **Body** → select **raw** → set type to **JSON**
+5. Paste one of the following example payloads and hit **Send**
+
+**Missed delivery:**
+```json
+{"message": "My parcel was supposed to be delivered yesterday but nobody came. Postcode 3521AL. What now?"}
+```
+
+**Damage report:**
+```json
+{"message": "My package arrived completely smashed, contents broken. Amsterdam."}
+```
+
+**General question:**
+```json
+{"message": "Do you deliver on Saturdays to Rotterdam?"}
+```
+
+**Compliment:**
+```json
+{"message": "Just want to say your driver was super friendly today, thanks!"}
+```
+
+**Dutch message:**
+```json
+{"message": "Mijn pakket is al 3 dagen te laat! Postcode 1012AB. Dit is belachelijk!"}
+```
+
+The full processed payload will appear in the Postman response panel and simultaneously on your [webhook.site](https://webhook.site) page.
+
+## Weather Logic
+
+Bad weather is flagged when **any** of these conditions are true:
+
+| Condition | Threshold | Reasoning |
+|---|---|---|
+| Precipitation | > 2mm/h | Moderate rain — slippery roads, parcel water damage risk |
+| Wind speed | > 40km/h | Dangerous for delivery vans, especially on highways |
+| Snowfall | > 0cm | Any snow significantly impacts Dutch roads |
+| Temperature | < 0°C | Ice risk on roads, driver safety concern |
+
+## Routing Table
+
+| Situation | Action |
+|---|---|
+| Missed delivery/delay + bad weather | Possible weather delay, check route |
+| Missed delivery + good weather | Urgent — no excuse, investigate |
+| Delay + good weather | Check logistics |
+| Damage | Urgent — mark as high priority |
+| General question | Automatic reply via email or Slack |
+| Compliment | The team deserves to smile too |
+| Other | Needs manual review |
+
+## Extra Features
+
+- **Sentiment detection** — frustrated customers get priority escalation
+- **Language detection** — non-Dutch/English messages tagged for translation
+- **Auto-reply drafts** — general questions get a suggested reply
+
+## Assumptions
+
+- Weather thresholds are conservative — better to flag and have team verify
+- Geocoding is biased to Netherlands (`countrycodes=nl`)
+- GPT-4o-mini is used for cost/speed balance
+- Outbound webhook failure doesn't block the response
+- No database or queue — synchronous processing per the MVP scope
+
+## Tech Stack
+
+- **Next.js 16** (App Router)
+- **TypeScript** (strict)
+- **Vercel AI SDK** + **Zod** (structured AI output)
+- **Open-Meteo** (weather, no API key needed)
+- **Nominatim** (geocoding, no API key needed)# bestbyte
